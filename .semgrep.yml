@@ -1,0 +1,6 @@
+rules:
+  - id: unsafe-eval
+    languages: [javascript]
+    message: Avoid eval on application data.
+    severity: ERROR
+    pattern: eval(...)

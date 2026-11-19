@@ -1,0 +1,3 @@
+10021	FAIL	X-Content-Type-Options missing
+10020	FAIL	X-Frame-Options missing
+10038	FAIL	Content Security Policy missing

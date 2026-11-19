@@ -1,0 +1,63 @@
+name: DevSecOps CI/CD
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Secret Scanning - Gitleaks
+        run: |
+          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:latest git /repo --redact --exit-code 1
+      - name: SAST - Semgrep
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src semgrep/semgrep:latest semgrep scan --config p/javascript --config .semgrep.yml --error src
+      - name: IaC - Docker and Compose policies
+        run: python3 security/check-iac.py
+      - name: Trivy setup
+        uses: aquasecurity/setup-trivy@v0.2.4
+      - name: SBOM - CycloneDX
+        run: |
+          mkdir -p reports
+          trivy fs --format cyclonedx --output reports/sbom.cdx.json .
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: reports/sbom.cdx.json
+      - name: SCA - Dependency vulnerabilities
+        run: trivy fs --scanners vuln --severity HIGH,CRITICAL --exit-code 1 .
+      - name: IaC - Trivy misconfigurations
+        run: trivy config --severity HIGH,CRITICAL --exit-code 1 .
+      - name: Build container
+        run: docker compose build
+      - name: Container scan - Trivy
+        run: trivy image --severity HIGH,CRITICAL --exit-code 1 secure-api:ci
+      - name: Deploy ephemeral staging
+        run: |
+          docker compose up -d --no-build
+          curl --retry 20 --retry-connrefused --retry-delay 2 -fsS http://127.0.0.1:3000/health
+      - name: DAST - HTTP security tests
+        run: bash security/http-tests.sh
+      - name: DAST - OWASP ZAP
+        run: |
+          cp security/zap-rules.tsv reports/
+          chmod 777 reports
+          docker run --rm --network host -v "$PWD/reports:/zap/wrk:rw" ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t http://127.0.0.1:3000 -c zap-rules.tsv -r zap.html -J zap.json -I
+      - name: Upload DAST reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dast-reports
+          path: reports/zap.*
+          if-no-files-found: ignore
+      - name: Stop staging
+        if: always()
+        run: docker compose down
