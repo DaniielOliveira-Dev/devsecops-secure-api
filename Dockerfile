@@ -30,7 +30,7 @@ COPY --chown=node:node package*.json ./
 COPY --chown=node:node src ./src
 
 # Executar com usuario sem privilegios
-USER root
+USER node
 
 EXPOSE 3000
 
